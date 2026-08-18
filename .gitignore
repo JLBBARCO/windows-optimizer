@@ -1,0 +1,8 @@
+# Python Settings
+.venv/**
+
+# Logs
+log.log
+
+# IDEs Settings
+.vscode/
