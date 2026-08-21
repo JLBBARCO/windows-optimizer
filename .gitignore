@@ -1,8 +1,10 @@
 # Python Settings
 .venv/**
+__pycache__/
 
 # Logs
 log.log
+terminal.log
 
 # IDEs Settings
 .vscode/

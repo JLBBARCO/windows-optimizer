@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Otimizador de Windows</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="shortcut icon" href="../src/favicon/favicon.svg" type="image/x-icon">
+    <script src="js/script.js"></script>
+    <script src="https://kit.fontawesome.com/4a1e49a1ca.js" crossorigin="anonymous"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&family=Exo+2:ital,wght@0,100..900;1,100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=download" />
+</head>
+
+<body>
+    <header></header>
+    <main>
+        <section id="home" aria-label="Home">
+            <h1>Otimizador de Windows</h1>
+            <p>Programa desenvolvido em Python feito para executar comandos para limpar arquivos temporários, atualizar
+                todos os programas, fazer download de uma nova imagem do sistema operacional, corrigir erros de ícones,
+                entre outros problemas que possam acontecer.</p>
+        </section>
+        <section id="commands" aria-label="Comandos">
+            <h2>Comandos</h2>
+            <p>Para executar o otimizador, copie e cole um dos comandos abaixo no PowerShell:</p>
+            <div class="command">
+                <p>Última versão estável</p>
+                <code
+                    onclick="copyToClipboard()">irm https://raw.githubusercontent.com/JLBBARCO/windows-optimizer/main/core-app/run.ps1 | iex</code>
+            </div>
+            <div class="command">
+                <p>Versão beta</p>
+                <code
+                    onclick="copyToClipboard()">irm https://raw.githubusercontent.com/JLBBARCO/windows-optimizer/beta/core-app/run.ps1 | iex</code>
+            </div>
+        </section>
+        <section id="features" aria-label="Funcionalidades">
+            <h2>Funcionalidades</h2>
+            <ul>
+                <li>Limpeza de arquivos temporários</li>
+                <li>Atualização de programas</li>
+                <li>Download de nova imagem do sistema operacional</li>
+                <li>Correção de erros de ícones</li>
+                <li>Entre outros problemas que possam acontecer</li>
+            </ul>
+        </section>
+        <section id="versions" aria-label="Versões">
+            <h2>Versões</h2>
+            <table id="table_versions">
+                <thead>
+                    <td>Releases</td>
+                    <td>Versão</td>
+                    <td>Data de Lançamento</td>
+                    <td>Download Portável</td>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </section>
+    </main>
+    <footer></footer>
+</body>
+
+</html>
