@@ -1,0 +1,62 @@
+{
+  "cmd": [
+    {
+      "command": "taskkill /f /im explorer.exe",
+      "timeout": 30,
+      "description": "Close explorer.exe to refresh the desktop and apply icon cache changes."
+    },
+    {
+      "command": "del /f /q \"%LOCALAPPDATA%\\IconCache.db\"",
+      "timeout": 30,
+      "description": "Delete the Windows icon cache file for the current user."
+    },
+    {
+      "command": "del /f /q \"%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\IconCache_*.db\"",
+      "timeout": 30,
+      "description": "Delete all icon cache files related to File Explorer."
+    },
+    {
+      "command": "start \"\" /b explorer.exe",
+      "description": "Restart Windows Explorer to apply the cache rebuild."
+    },
+    {
+      "command": "del /q /f /s \"%TEMP%\\*\"",
+      "timeout": 300,
+      "description": "Clear temporary files in the user temp folder to free up space."
+    }
+  ],
+  "powershell": [
+    {
+      "command": "sfc /scannow",
+      "shell": "cmd",
+      "timeout": 3600,
+      "description": "Run System File Checker to scan and repair system files."
+    },
+    {
+      "command": "DISM /Online /Cleanup-Image /RestoreHealth",
+      "shell": "cmd",
+      "timeout": 7200,
+      "description": "Repair the Windows image using DISM."
+    },
+    {
+      "command": "ipconfig /flushdns",
+      "shell": "cmd",
+      "timeout": 300,
+      "description": "Flush the DNS resolver cache."
+    },
+    {
+      "command": "chkdsk /f /r",
+      "shell": "cmd",
+      "input": "Y\n",
+      "input_mode": "pipe",
+      "timeout": 7200,
+      "description": "Check the disk for errors and repair them."
+    },
+    {
+      "command": "winget update --all --include-unknown --accept-source-agreements --accept-package-agreements --disable-interactivity",
+      "shell": "cmd",
+      "timeout": 7200,
+      "description": "Update all programs."
+    }
+  ]
+}
