@@ -1,4 +1,10 @@
 {
-  "release": { "version": "", "release_date": "" },
-  "pre-release": { "version": "v0.1.0", "release_date": "21-08-2026" }
+  "release": {
+    "version": "",
+    "release_date": ""
+  },
+  "pre-release": {
+    "version": "v0.1.0",
+    "release_date": "28-08-2026"
+  }
 }
