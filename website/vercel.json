@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/releases",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
