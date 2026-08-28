@@ -1,22 +1,16 @@
 const repository = "JLBBARCO/windows-optimizer";
 const githubApiUrl = `https://api.github.com/repos/${repository}/releases`;
 
-function getDownloadAsset(assets) {
-  return (
-    assets.find((asset) =>
-      /portable|port[aá]vel|\.zip$|\.exe$/i.test(asset.name),
-    ) || assets[0]
-  );
-}
-
+// The application is not compiled: releases carry no .exe asset and are executed
+// directly from the source code by core-app/run.ps1. The link therefore points
+// to the release page, where the source archive and the notes live.
 function normalizeRelease(release) {
-  const downloadAsset = getDownloadAsset(release.assets || []);
-
   return {
     release: release.name || release.tag_name,
     version: release.tag_name,
     release_date: release.published_at || release.created_at,
-    download_link: downloadAsset?.browser_download_url || release.html_url,
+    download_link: release.html_url,
+    source_zip: release.zipball_url,
     prerelease: release.prerelease,
   };
 }

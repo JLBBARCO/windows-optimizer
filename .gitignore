@@ -5,6 +5,7 @@ __pycache__/
 # Logs
 log.log
 terminal.log
+core-app/.test-logs/
 
 # IDEs Settings
 .vscode/
