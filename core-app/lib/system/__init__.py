@@ -85,20 +85,100 @@ if IS_WINDOWS:
     _SW_SHOWNORMAL = 1
     _INFINITE = 0xFFFFFFFF
 
+    # Explicit prototypes. Without them ctypes guesses the width of every
+    # argument and of the return value, so a 64-bit HANDLE (including the -1
+    # pseudo handle returned by GetCurrentProcess) may be truncated and every
+    # token query silently fails. That is exactly what the log showed:
+    # "elevated=False | elevation_type=None (unknown) | integrity=unknown",
+    # which made the app believe UAC could not be used and run DISM/SFC/chkdsk
+    # without privileges (errors 740 and 1).
+    _advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    _kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+    _kernel32.GetCurrentProcess.argtypes = []
+    _kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+    _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    _kernel32.LocalFree.restype = ctypes.c_void_p
+
+    _advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    _advapi32.OpenProcessToken.restype = wintypes.BOOL
+    _advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    _advapi32.GetTokenInformation.restype = wintypes.BOOL
+    _advapi32.CheckTokenMembership.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.BOOL),
+    ]
+    _advapi32.CheckTokenMembership.restype = wintypes.BOOL
+    _advapi32.ConvertStringSidToSidW.argtypes = [
+        wintypes.LPCWSTR,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    _advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
+    _advapi32.GetSidSubAuthorityCount.argtypes = [ctypes.c_void_p]
+    _advapi32.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+    _advapi32.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    _advapi32.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+
+    _shell32 = ctypes.WinDLL('shell32', use_last_error=True)
+    _shell32.ShellExecuteExW.argtypes = [ctypes.c_void_p]
+    _shell32.ShellExecuteExW.restype = wintypes.BOOL
+    _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.GetExitCodeProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+
+# Last Win32 error observed while inspecting the token, kept for diagnostics.
+_last_token_error = 0
+ADMINISTRATORS_SID = 'S-1-5-32-544'
+
 
 # ---------------------------------------------------------------- token state
-def _open_process_token():
-    handle = ctypes.wintypes.HANDLE()
-    if not ctypes.windll.advapi32.OpenProcessToken(
-        ctypes.windll.kernel32.GetCurrentProcess(),
-        _TOKEN_QUERY,
+def _open_process_token(access=None):
+    """Open the current process token, remembering the Win32 error on failure."""
+    global _last_token_error
+    if not IS_WINDOWS:
+        return None
+
+    handle = wintypes.HANDLE()
+    desired = _TOKEN_QUERY if access is None else access
+    ctypes.set_last_error(0)
+    if not _advapi32.OpenProcessToken(
+        _kernel32.GetCurrentProcess(),
+        desired,
         ctypes.byref(handle),
     ):
+        _last_token_error = ctypes.get_last_error()
         return None
     return handle
 
 
+def _close_handle(handle):
+    if handle is None:
+        return
+    try:
+        _kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
 def _token_dword(info_class):
+    global _last_token_error
     if not IS_WINDOWS:
         return None
     handle = None
@@ -106,28 +186,29 @@ def _token_dword(info_class):
         handle = _open_process_token()
         if handle is None:
             return None
-        value = ctypes.wintypes.DWORD()
-        size = ctypes.wintypes.DWORD()
-        ok = ctypes.windll.advapi32.GetTokenInformation(
+        value = wintypes.DWORD()
+        size = wintypes.DWORD()
+        ctypes.set_last_error(0)
+        ok = _advapi32.GetTokenInformation(
             handle,
             info_class,
             ctypes.byref(value),
             ctypes.sizeof(value),
             ctypes.byref(size),
         )
-        return int(value.value) if ok else None
+        if not ok:
+            _last_token_error = ctypes.get_last_error()
+            return None
+        return int(value.value)
     except Exception:
         return None
     finally:
-        if handle is not None:
-            try:
-                ctypes.windll.kernel32.CloseHandle(handle)
-            except Exception:
-                pass
+        _close_handle(handle)
 
 
 def integrity_level():
     """Return the process integrity level RID (0x3000 = high) or ``None``."""
+    global _last_token_error
     if not IS_WINDOWS:
         return None
     handle = None
@@ -136,40 +217,62 @@ def integrity_level():
         if handle is None:
             return None
 
-        size = ctypes.wintypes.DWORD(0)
-        ctypes.windll.advapi32.GetTokenInformation(
+        size = wintypes.DWORD(0)
+        _advapi32.GetTokenInformation(
             handle, _TokenIntegrityLevel, None, 0, ctypes.byref(size)
         )
         if not size.value:
+            _last_token_error = ctypes.get_last_error()
             return None
 
         buffer = ctypes.create_string_buffer(size.value)
-        if not ctypes.windll.advapi32.GetTokenInformation(
+        ctypes.set_last_error(0)
+        if not _advapi32.GetTokenInformation(
             handle, _TokenIntegrityLevel, buffer, size, ctypes.byref(size)
         ):
+            _last_token_error = ctypes.get_last_error()
             return None
 
         # TOKEN_MANDATORY_LABEL { SID_AND_ATTRIBUTES Label } -> Label.Sid
         sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
+        if not sid:
+            return None
 
-        get_count = ctypes.windll.advapi32.GetSidSubAuthorityCount
-        get_count.restype = ctypes.POINTER(ctypes.c_ubyte)
-        get_count.argtypes = [ctypes.c_void_p]
-
-        get_sub = ctypes.windll.advapi32.GetSidSubAuthority
-        get_sub.restype = ctypes.POINTER(ctypes.wintypes.DWORD)
-        get_sub.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD]
-
-        count = get_count(sid)[0]
+        count = _advapi32.GetSidSubAuthorityCount(sid)[0]
         if count == 0:
             return None
-        return int(get_sub(sid, count - 1)[0])
+        return int(_advapi32.GetSidSubAuthority(sid, count - 1)[0])
     except Exception:
         return None
     finally:
-        if handle is not None:
+        _close_handle(handle)
+
+
+def is_in_administrators_group():
+    """True when the effective token carries the local Administrators group.
+
+    A filtered (limited) admin token reports ``False`` here because the group is
+    marked deny-only, so this answers "am I already administrator right now?",
+    never "can this user elevate?".
+    """
+    if not IS_WINDOWS:
+        return False
+    sid = ctypes.c_void_p()
+    try:
+        if not _advapi32.ConvertStringSidToSidW(
+            ADMINISTRATORS_SID, ctypes.byref(sid)
+        ):
+            return False
+        member = wintypes.BOOL(0)
+        if not _advapi32.CheckTokenMembership(None, sid, ctypes.byref(member)):
+            return False
+        return bool(member.value)
+    except Exception:
+        return False
+    finally:
+        if sid:
             try:
-                ctypes.windll.kernel32.CloseHandle(handle)
+                _kernel32.LocalFree(sid)
             except Exception:
                 pass
 
@@ -183,24 +286,56 @@ def is_admin():
     if elevated is not None:
         return bool(elevated)
 
+    # Fallbacks used only when the token query itself failed.
     try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        if bool(ctypes.windll.shell32.IsUserAnAdmin()):
+            return True
     except Exception:
-        return False
+        pass
+
+    level = integrity_level()
+    if level is not None:
+        return level >= 0x3000
+
+    return is_in_administrators_group()
 
 
 def elevation_type():
     return _token_dword(_TokenElevationType)
 
 
+def token_query_error():
+    """Last Win32 error code produced while inspecting the token (0 = none)."""
+    return _last_token_error
+
+
 def can_be_elevated():
-    """True when a UAC prompt can realistically produce an elevated token."""
+    """True when a UAC prompt is worth showing for this process."""
     if not IS_WINDOWS:
         return False
+    if os.environ.get('WO_NO_ELEVATE'):
+        return False
+    if is_admin():
+        return False
+
+    kind = elevation_type()
     # Type 3 = filtered admin token, a consent prompt is enough.
     # Type 1 = no split token (standard user or UAC disabled); the prompt will
     # ask for administrator credentials, which may still succeed.
-    return elevation_type() in (1, 3)
+    if kind in (1, 3):
+        return True
+    if kind == 2:
+        # Full token: nothing to elevate (is_admin already covered this).
+        return False
+
+    # Unknown state (the token query failed). Never silently give up here: the
+    # UAC dialog is the only reliable authority, so the attempt is made anyway
+    # and the user decides. Skipping it was what left DISM/SFC without rights.
+    log.warning(
+        'Could not read the token elevation type '
+        f'(GetLastError={_last_token_error}); requesting elevation anyway.'
+    )
+    return True
 
 
 def token_report():
@@ -216,15 +351,19 @@ def token_report():
     else:
         integrity_text = f'0x{level:04X} ({INTEGRITY_NAMES.get(level, "unknown")})'
 
-    return (
+    report = (
         f'user={os.environ.get("USERNAME", "?")}'
         f' | elevated={is_admin()}'
         f' | elevation_type={elevation} ({ELEVATION_TYPE_NAMES.get(elevation, "unknown")})'
         f' | integrity={integrity_text}'
+        f' | admin_group={is_in_administrators_group()}'
         f' | python={sys.version.split()[0]}'
         f' | pid={os.getpid()}'
         f' | argv={sys.argv[1:]}'
     )
+    if _last_token_error:
+        report += f' | token_query_error={_last_token_error}'
+    return report
 
 
 # -------------------------------------------------------------- elevation flow
@@ -311,8 +450,9 @@ def elevate_and_wait(wait=True):
 
     log.info(f'Requesting administrator privileges for: {executable} {params}')
 
-    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
-        code = ctypes.GetLastError()
+    ctypes.set_last_error(0)
+    if not _shell32.ShellExecuteExW(ctypes.byref(info)):
+        code = ctypes.get_last_error() or int(info.hInstApp or 0)
         if code == ERROR_CANCELLED:
             log.warning('The UAC prompt was refused or dismissed by the user')
             return ElevationOutcome(refused=True, detail='UAC refused')
@@ -325,11 +465,9 @@ def elevate_and_wait(wait=True):
         return ElevationOutcome(started=True, detail='child not awaited')
 
     try:
-        ctypes.windll.kernel32.WaitForSingleObject(info.hProcess, _INFINITE)
-        exit_code = ctypes.wintypes.DWORD()
-        ctypes.windll.kernel32.GetExitCodeProcess(
-            info.hProcess, ctypes.byref(exit_code)
-        )
+        _kernel32.WaitForSingleObject(info.hProcess, _INFINITE)
+        exit_code = wintypes.DWORD()
+        _kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(exit_code))
         code = int(exit_code.value)
         log.info(f'Elevated process finished with exit code {code}')
         return ElevationOutcome(started=True, exit_code=code)
@@ -337,10 +475,7 @@ def elevate_and_wait(wait=True):
         log.error(f'Error "{error}" while waiting for the elevated process')
         return ElevationOutcome(started=True, detail=str(error))
     finally:
-        try:
-            ctypes.windll.kernel32.CloseHandle(info.hProcess)
-        except Exception:
-            pass
+        _close_handle(info.hProcess)
 
 
 def elevate():

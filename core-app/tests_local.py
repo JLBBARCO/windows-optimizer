@@ -106,7 +106,13 @@ result = runner.run(
 )
 check('pipe input mode works', result.status == STATUS_OK, result.status)
 
-result = runner.run(spec('seq 1 20000', name='large output', timeout=60))
+# The interpreter itself generates the output: "seq" does not exist on Windows
+# and the run there ended in [WinError 2] instead of testing the reader.
+large_output_command = (
+    f'"{sys.executable}" -c "'
+    'import sys;sys.stdout.write(chr(10).join(str(i) for i in range(1, 20001)))"'
+)
+result = runner.run(spec(large_output_command, name='large output', timeout=60))
 check('large output does not deadlock', result.status == STATUS_OK, result.status)
 
 print('decoding')

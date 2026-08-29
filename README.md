@@ -42,6 +42,7 @@ lib/json/               JSON loading helpers and plan lookup
 lib/log/                File and terminal logging helpers
 lib/runner/             Command normalization and supervised execution engine
 lib/shortcut/           Desktop shortcut for the one-line PowerShell launcher
+assets/icons/icon.ico   Application icon used by the Desktop shortcut
 lib/system/             Elevation, process checks, self-protection and tool discovery
 tests_local.py          Local sanity tests for the execution engine
 run.ps1                 PowerShell launcher that runs the latest release directly from source
@@ -145,6 +146,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.gith
 - The Desktop folder is resolved with `SHGetKnownFolderPath`, so OneDrive Known Folder Move is handled correctly.
 - The `.lnk` is written through the `WScript.Shell` COM object driven by a `-EncodedCommand` PowerShell child process: no `pywin32` dependency and no quoting problems.
 - The shortcut is created by the **non elevated** parent process, because the elevated child may belong to another user and therefore to another Desktop.
+- The icon is `core-app/assets/icons/icon.ico` (generated from `src/favicon/favicon.svg`, sizes 16 to 256). Because `run.ps1` deletes its staging folder at the end of every run, the file is cached in `%LOCALAPPDATA%\windows-optimizer\icon.ico` and the `.lnk` points there; `%WO_ICON%` overrides it and the PowerShell icon is still the last-resort fallback. An existing shortcut created with the old icon is repointed automatically on the next run.
 
 Manual usage:
 
@@ -198,7 +200,9 @@ Command line flags:
 
 Accepting the UAC prompt does not guarantee that the new process received an elevated token, so the application no longer assumes it:
 
-- On every start the real token state is logged: user, `TokenElevation`, `TokenElevationType` (1 = no split token, 2 = full/elevated, 3 = filtered admin token) and the integrity level (`0x3000` = high).
+- On every start the real token state is logged: user, `TokenElevation`, `TokenElevationType` (1 = no split token, 2 = full/elevated, 3 = filtered admin token), the integrity level (`0x3000` = high), the Administrators group membership of the effective token and, when a query fails, the Win32 error code (`token_query_error`).
+- Every `advapi32`/`kernel32` call used for this has an explicit `ctypes` prototype. Without them the 64-bit handles were truncated, `GetTokenInformation` failed and the log printed `elevation_type=None | integrity=unknown`.
+- When the token state cannot be read, elevation is **requested anyway**: the UAC dialog is the only reliable authority. Giving up in this situation was what made DISM fail with error `740` and SFC with error `1` while no prompt was ever shown.
 - Elevation uses `ShellExecuteExW` with `SEE_MASK_NOCLOSEPROCESS`, so the parent **waits** for the elevated child and returns its exit code. Previously the parent logged `Request administrator privileges` and ended immediately, which looked like a failure even when the child was working correctly.
 - The log folder is shared by both processes through `--log-dir` and `%WO_LOG_DIR%`, and every line carries the process id, so an interleaved parent/child log stays readable.
 - A refused prompt is detected through `ERROR_CANCELLED` (1223) and reported as a denial with exit code 4, instead of silently continuing.

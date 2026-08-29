@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Binary assets must never be normalized (EOL conversion corrupts them)
+*.ico binary
+*.png binary
+*.jpg binary
+*.gif binary

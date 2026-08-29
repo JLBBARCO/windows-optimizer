@@ -52,6 +52,7 @@ From the command line (repository root, ``core-app`` as working directory)::
 
 import base64
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -253,19 +254,70 @@ def shortcut_path(branch=None, directory=None, name=None):
     return folder / (name or shortcut_name(branch))
 
 
+def source_icon_path():
+    """``core-app/assets/icons/icon.ico``, the icon shipped with the sources."""
+    try:
+        return Path(__file__).resolve().parents[2] / 'assets' / 'icons' / 'icon.ico'
+    except Exception:
+        return None
+
+
+def persistent_icon_path():
+    """Durable copy of the icon, outside the (temporary) source folder.
+
+    ``run.ps1`` expands the release into
+    ``%LOCALAPPDATA%\\windows-optimizer\\src\\<tag>-<guid>`` and deletes that folder
+    when the run ends. A ``.lnk`` pointing its ``IconLocation`` inside it would
+    lose the icon on the next Explorer refresh, so the file is cached one level
+    up, in ``%LOCALAPPDATA%\\windows-optimizer\\icon.ico``.
+    """
+    base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA')
+    if not base:
+        return None
+    return Path(base) / 'windows-optimizer' / 'icon.ico'
+
+
+def ensure_icon_file():
+    """Return a usable ``.ico`` path, caching the shipped icon when possible."""
+    source = source_icon_path()
+    target = persistent_icon_path()
+
+    if source is not None and source.is_file():
+        if target is None:
+            return source
+        try:
+            same = (
+                target.is_file()
+                and target.stat().st_size == source.stat().st_size
+                and target.stat().st_mtime >= source.stat().st_mtime
+            )
+            if not same:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(str(source), str(target))
+            return target
+        except Exception as error:
+            log.warning(f'Could not cache the shortcut icon: {error}')
+            return source
+
+    if target is not None and target.is_file():
+        return target
+    return None
+
+
 def icon_location():
     """Icon used by the shortcut.
 
-    An optional ``core-app/icon.ico`` is honoured when the user drops one there;
-    otherwise the PowerShell icon is used, since the application is distributed
-    as source code and has no executable of its own.
+    ``core-app/assets/icons/icon.ico`` is the official icon; ``%WO_ICON%`` still
+    overrides it, and the PowerShell icon remains the last resort so the
+    shortcut is never created without one.
     """
-    try:
-        candidate = Path(__file__).resolve().parents[2] / 'icon.ico'
-        if candidate.is_file():
-            return str(candidate)
-    except Exception:
-        pass
+    override = os.environ.get('WO_ICON')
+    if override:
+        return override if ',' in override else f'{override},0'
+
+    icon = ensure_icon_file()
+    if icon is not None:
+        return f'{icon},0'
 
     return f'{powershell_path()},0'
 
@@ -389,6 +441,77 @@ def create_shortcut(
     return destination
 
 
+def shortcut_icon_of(destination):
+    """Read the ``IconLocation`` stored inside an existing ``.lnk``."""
+    if not IS_WINDOWS:
+        return None
+    script = '\n'.join(
+        [
+            "$ErrorActionPreference = 'Stop'",
+            '$shell = New-Object -ComObject WScript.Shell',
+            f'$link = $shell.CreateShortcut({_powershell_literal(destination)})',
+            'Write-Output $link.IconLocation',
+            '[Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null',
+        ]
+    )
+    try:
+        code, stdout, stderr = _run_powershell(script)
+    except Exception:
+        return None
+    if code != 0:
+        return None
+    return stdout.strip()
+
+
+def _same_icon(first, second):
+    def normalize(value):
+        text = str(value or '').strip().strip('"').replace('/', '\\')
+        if text.endswith(',0'):
+            text = text[:-2]
+        return text.rstrip(',').lower()
+
+    return normalize(first) == normalize(second)
+
+
+def refresh_shortcut_icon(destination):
+    """Repoint an existing shortcut to the current icon when it differs.
+
+    Shortcuts created before ``core-app/assets/icons/icon.ico`` existed still
+    show the PowerShell icon, and ``ensure_shortcut`` never rewrites a file that
+    already exists, so the icon is checked (and only then fixed) on every run.
+    """
+    if not IS_WINDOWS or destination is None:
+        return False
+
+    expected = icon_location()
+    current = shortcut_icon_of(destination)
+    if current is None or _same_icon(current, expected):
+        return False
+
+    script = '\n'.join(
+        [
+            "$ErrorActionPreference = 'Stop'",
+            '$shell = New-Object -ComObject WScript.Shell',
+            f'$link = $shell.CreateShortcut({_powershell_literal(destination)})',
+            f'$link.IconLocation = {_powershell_literal(expected)}',
+            '$link.Save()',
+            '[Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null',
+        ]
+    )
+    try:
+        code, stdout, stderr = _run_powershell(script)
+    except Exception as error:
+        log.warning(f'Could not update the shortcut icon: {error}')
+        return False
+
+    if code != 0:
+        log.warning(f'Could not update the shortcut icon ({stderr or stdout})')
+        return False
+
+    log.info(f'Desktop shortcut icon updated to "{expected}"')
+    return True
+
+
 def ensure_shortcut(branch=None, directory=None, name=None, run_as_admin=False):
     """Create the shortcut only when it is missing. Returns its path or ``None``."""
     if not IS_WINDOWS:
@@ -396,6 +519,7 @@ def ensure_shortcut(branch=None, directory=None, name=None, run_as_admin=False):
 
     destination = shortcut_path(branch, directory=directory, name=name)
     if destination is not None and destination.exists():
+        refresh_shortcut_icon(destination)
         return destination
 
     return create_shortcut(

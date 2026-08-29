@@ -82,6 +82,13 @@ class Application:
         self.shortcut_branch = self._read_option('--shortcut-branch')
         self.lock = None
 
+        # The log destination is resolved before the first line is written, so a
+        # run started with --log-dir (the elevated child always is) never splits
+        # its own header across two different folders.
+        log.configure(log_directory=self.log_dir)
+        log._new_line()
+        log.info('Initialize System')
+
         self.commands = {}
         self.commands_path = None
         self.results = []
@@ -334,6 +341,7 @@ class Application:
 
     def _build_plan(self):
         placeholders = system.placeholders()
+        log.info('Initialize System')
         log.info(f'Resolved winget command: {placeholders["winget"]}')
 
         specs = []
