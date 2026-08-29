@@ -1,0 +1,18 @@
+# Python Settings
+.venv/
+__pycache__/
+
+# Logs
+log.log
+terminal.log
+core-app/.test-logs/
+
+# IDEs Settings
+.vscode/
+
+# OS Settings
+.DS_Store
+
+# Key Files
+.env
+windows-optimizer.lock

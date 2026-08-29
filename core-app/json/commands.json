@@ -1,0 +1,86 @@
+{
+  "_readme": {
+    "format": "Every entry of \"plan\" is executed once, in order, isolated from the others.",
+    "fields": {
+      "name": "Friendly label used in the logs and in the final report.",
+      "command": "Command line. Placeholders: {winget}, {system_drive}, {windir}, {temp}, {log_dir}.",
+      "shell": "\"cmd\" or \"powershell\".",
+      "timeout": "Seconds before the whole process tree is killed.",
+      "optional": "true = a failure is logged as WARNING and never aborts the plan.",
+      "accepted_exit_codes": "Non-zero exit codes that must be treated as success.",
+      "enabled": "false = keep the entry documented but do not run it.",
+      "input": "Text sent to the command; use \"input_mode\": \"pipe\" for cmd pipes.",
+      "detached": "true = fire and forget (GUI launches)."
+    },
+    "notes": [
+      "Explorer icon-cache commands must NOT be declared here: the application runs a dedicated internal workflow at the end of the plan.",
+      "%WO_PROTECTED_PATHS% is exported by the application and lists paths the cleanup must never delete (the running source tree, the Python interpreter and the log folder)."
+    ]
+  },
+  "plan": [
+    {
+      "name": "Flush DNS cache",
+      "group": "cmd",
+      "command": "ipconfig /flushdns",
+      "shell": "cmd",
+      "timeout": 120,
+      "optional": true,
+      "description": "Flush the DNS resolver cache."
+    },
+    {
+      "name": "Clear user TEMP folder",
+      "group": "powershell",
+      "command": "$ErrorActionPreference = 'SilentlyContinue'; $protected = @(); if ($env:WO_PROTECTED_PATHS) { $protected = $env:WO_PROTECTED_PATHS.Split(';') | Where-Object { $_ } }; $removed = 0; $kept = 0; Get-ChildItem -LiteralPath $env:TEMP -Force | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | ForEach-Object { $full = $_.FullName; $skip = $false; foreach ($p in $protected) { if ($full -eq $p -or $full.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase) -or $p.StartsWith($full, [System.StringComparison]::OrdinalIgnoreCase)) { $skip = $true; break } }; if ($skip) { $kept++ } else { Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $full)) { $removed++ } } }; Write-Output ('TEMP cleanup finished. Removed: {0} | Kept (in use or protected): {1}' -f $removed, $kept); exit 0",
+      "shell": "powershell",
+      "timeout": 900,
+      "optional": true,
+      "description": "Delete the contents of the user TEMP folder, skipping reparse points, locked items and the paths listed in %WO_PROTECTED_PATHS% (the application's own files)."
+    },
+    {
+      "name": "Repair Windows image (DISM)",
+      "group": "cmd",
+      "command": "DISM /Online /Cleanup-Image /RestoreHealth",
+      "shell": "cmd",
+      "timeout": 7200,
+      "optional": true,
+      "accepted_exit_codes": [3010, 1641],
+      "description": "Repair the component store before running SFC. Exit codes 3010/1641 only mean a reboot is required."
+    },
+    {
+      "name": "System File Checker (SFC)",
+      "group": "cmd",
+      "command": "sfc /scannow",
+      "shell": "cmd",
+      "timeout": 5400,
+      "optional": true,
+      "description": "Scan and repair protected system files."
+    },
+    {
+      "name": "Online disk check",
+      "group": "cmd",
+      "command": "chkdsk {system_drive} /scan /forceofflinefix",
+      "shell": "cmd",
+      "timeout": 7200,
+      "optional": true,
+      "accepted_exit_codes": [1, 2, 3],
+      "description": "Online NTFS scan that queues any repair for the next boot. Replaces the interactive \"chkdsk /f /r\", which stopped the whole plan waiting for a localized Y/N answer that could never be piped reliably."
+    },
+    {
+      "name": "Update installed programs (winget)",
+      "group": "cmd",
+      "command": "{winget} upgrade --all --include-unknown --silent --accept-source-agreements --accept-package-agreements --disable-interactivity",
+      "shell": "cmd",
+      "timeout": 7200,
+      "optional": true,
+      "accepted_exit_codes": [
+        "-1978335189",
+        "-1978335212",
+        "-1978334972",
+        "0x8A15002B",
+        "0x8A150014",
+        "0x8A150064"
+      ],
+      "description": "Upgrade every package known to winget. {winget} is resolved to the real winget.exe path because the WindowsApps alias is often missing in an elevated session."
+    }
+  ]
+}
