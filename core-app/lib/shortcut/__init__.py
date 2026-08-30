@@ -210,8 +210,16 @@ def _known_folder_desktop():
             pass
 
 
-def desktop_directory():
-    """Best available Desktop folder, or ``None`` when none is usable."""
+def _desktop_directory_candidates():
+    """All plausible Desktop folders, in preference order, without duplicates.
+
+    ``SHGetKnownFolderPath`` and the environment-variable fallbacks can point
+    to different folders depending on OneDrive Known Folder Move state, and
+    which one resolves first can differ between runs (elevated vs. not, COM
+    availability, etc.). Every caller that needs to know whether a shortcut
+    *already exists somewhere* must check all of these, not just the first
+    one that happens to resolve on a given run.
+    """
     candidates = []
 
     known = _known_folder_desktop()
@@ -229,6 +237,24 @@ def desktop_directory():
 
     candidates.append(Path.home() / 'Desktop')
 
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        try:
+            key = str(candidate.resolve())
+        except Exception:
+            key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def desktop_directory():
+    """Best available Desktop folder, or ``None`` when none is usable."""
+    candidates = _desktop_directory_candidates()
+
     for candidate in candidates:
         try:
             if candidate.is_dir():
@@ -244,6 +270,21 @@ def desktop_directory():
         except Exception:
             continue
 
+    return None
+
+
+def find_existing_shortcut(branch=None, name=None):
+    """Return the path of an already-existing shortcut, checking every
+    candidate Desktop folder, or ``None`` if it doesn't exist anywhere.
+    """
+    filename = name or shortcut_name(branch)
+    for candidate in _desktop_directory_candidates():
+        try:
+            path = candidate / filename
+            if path.is_file():
+                return path
+        except Exception:
+            continue
     return None
 
 
@@ -513,14 +554,29 @@ def refresh_shortcut_icon(destination):
 
 
 def ensure_shortcut(branch=None, directory=None, name=None, run_as_admin=False):
-    """Create the shortcut only when it is missing. Returns its path or ``None``."""
+    """Create the shortcut only when it is missing anywhere. Returns its path
+    or ``None``.
+
+    An explicit ``directory`` is trusted as-is (only that folder is checked).
+    Otherwise every candidate Desktop folder is searched first: if the
+    shortcut already exists in any of them, that path is returned unchanged
+    and nothing is created, which is what prevents duplicate ``.lnk`` files
+    when ``desktop_directory()`` resolves to a different folder on a later
+    run (OneDrive Known Folder Move, elevated vs. non-elevated shell, etc.).
+    """
     if not IS_WINDOWS:
         return None
 
-    destination = shortcut_path(branch, directory=directory, name=name)
-    if destination is not None and destination.exists():
-        refresh_shortcut_icon(destination)
-        return destination
+    if directory is not None:
+        destination = shortcut_path(branch, directory=directory, name=name)
+        if destination is not None and destination.exists():
+            refresh_shortcut_icon(destination)
+            return destination
+    else:
+        existing = find_existing_shortcut(branch, name=name)
+        if existing is not None:
+            refresh_shortcut_icon(existing)
+            return existing
 
     return create_shortcut(
         branch=branch,
