@@ -1,5 +1,10 @@
 param(
-	[ValidateSet('main', 'beta')]
+	# Intentionally no [ValidateSet('main','beta')] here: this script is meant
+	# to run as `irm <url> | iex`, and under Invoke-Expression PowerShell
+	# validates the parameter's implicit unbound value ("") against Validate*
+	# attributes before any argument is ever bound, so the script fails on
+	# every invocation regardless of what's passed (PowerShell/PowerShell#8778).
+	# 'main'/'beta' is validated manually in Resolve-Branch instead.
 	[string]$Branch,
 
 	# Extra arguments forwarded to the application (e.g. --simulate).
@@ -214,6 +219,9 @@ function Resolve-Branch {
 	param([string]$Requested)
 
 	if ($Requested) {
+		if ($Requested -notin @('main', 'beta')) {
+			throw "Invalid -Branch '$Requested'. Expected 'main' or 'beta'."
+		}
 		Write-Host "Channel from -Branch: $Requested"
 		return $Requested
 	}
