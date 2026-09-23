@@ -69,6 +69,33 @@ $script:ApiHeaders = @{
 	'User-Agent' = 'windows-optimizer-runner'
 }
 
+function Install-and-Update-Essential-Programs {
+	# The Microsoft Store stub of Python 3.11+ is broken on some systems, and
+	# the user may have a working Python 3.10 installed but not the App Installer
+	# itself. This function attempts to install both, so that the stub can be
+	# replaced with a real interpreter.
+	$winget = Get-Command -Name 'winget.exe' -CommandType Application -ErrorAction SilentlyContinue |
+		Select-Object -First 1
+	if (-not $winget) {
+		Write-Warning 'winget.exe was not found. Essential programs could not be installed automatically.'
+		return
+	}
+
+	try {
+		$commonArguments = @('install', '--source', 'winget', '--accept-source-agreements', '--accept-package-agreements')
+		foreach ($packageId in 'Microsoft.DesktopAppInstaller', 'Python.Python.3.12') {
+			Write-Host "Installing or updating $packageId..."
+			$process = Start-Process -FilePath $winget.Source -ArgumentList ($commonArguments + @('--id', $packageId)) -Wait -NoNewWindow -PassThru
+			if ($process.ExitCode -ne 0) {
+				Write-Warning "winget could not install $packageId (exit code $($process.ExitCode))."
+			}
+		}
+	}
+	catch {
+		Write-Warning "Failed to install App Installer and Python: $($_.Exception.Message)"
+	}
+}
+
 # $MyInvocation is scope sensitive: inside a function it describes the function
 # call, not the launcher. Capture the script-level values once, here.
 $script:InvocationLine = ''
@@ -501,6 +528,7 @@ function Invoke-ApplicationFromSource {
 
 # -------------------------------------------------------------------- main flow
 Initialize-Tls
+Install-and-Update-Essential-Programs
 
 $resolvedBranch = Resolve-Branch -Requested $Branch
 $release = Get-LatestReleaseForBranch -Branch $resolvedBranch
