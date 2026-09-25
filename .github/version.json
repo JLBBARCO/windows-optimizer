@@ -1,7 +1,7 @@
 {
   "release": {
-    "version": "v0.1.7",
-    "release_date": "30-08-2026"
+    "version": "v0.1.10",
+    "release_date": "25-09-2026"
   },
   "pre-release": {
     "version": "v0.1.9",
