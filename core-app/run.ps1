@@ -94,6 +94,19 @@ function Install-and-Update-Essential-Programs {
 	catch {
 		Write-Warning "Failed to install App Installer and Python: $($_.Exception.Message)"
 	}
+
+	# Refresh the session PATH so that executables installed by winget (which
+	# modifies the registry but not the running process environment) are
+	# immediately visible to Get-Command without restarting the terminal.
+	try {
+		$machinePath = [Environment]::GetEnvironmentVariable('PATH', [EnvironmentVariableTarget]::Machine)
+		$userPath    = [Environment]::GetEnvironmentVariable('PATH', [EnvironmentVariableTarget]::User)
+		$merged = (@($machinePath, $userPath) | Where-Object { $_ }) -join ';'
+		[Environment]::SetEnvironmentVariable('PATH', $merged, [EnvironmentVariableTarget]::Process)
+	}
+	catch {
+		Write-Warning "Could not refresh PATH: $($_.Exception.Message)"
+	}
 }
 
 # $MyInvocation is scope sensitive: inside a function it describes the function
@@ -342,12 +355,49 @@ function Get-PythonCommand {
 	if ($launcher) {
 		$candidates.Add([pscustomobject]@{ Executable = $launcher.Source; Prefix = @('-3') })
 	}
+	else {
+		# Per-user py.exe may live outside PATH after a fresh install.
+		$perUserLauncher = Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Programs\Python\Launcher\py.exe'
+		if (Test-Path -LiteralPath $perUserLauncher -ErrorAction SilentlyContinue) {
+			$candidates.Add([pscustomobject]@{ Executable = $perUserLauncher; Prefix = @('-3') })
+		}
+	}
 
 	foreach ($name in 'python.exe', 'python3.exe') {
 		$found = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue
 		foreach ($item in @($found)) {
 			if ($item) {
 				$candidates.Add([pscustomobject]@{ Executable = $item.Source; Prefix = @() })
+			}
+		}
+	}
+
+	# Probe well-known Python installation directories as a fallback.
+	# After a fresh winget install the PATH might not yet be visible to
+	# Get-Command even after a registry refresh (e.g. explorer broadcast
+	# hasn't propagated, or the session inherited an old environment block).
+	# The official installer and winget both use predictable paths.
+	$wellKnownRoots = @(
+		"$env:LOCALAPPDATA\Programs\Python"           # Per-user installs
+		"$env:APPDATA\Python"                         # Alternate per-user
+	)
+	# Machine-wide installs: %ProgramFiles% points to the correct folder
+	# on both 32-bit Windows (C:\Program Files) and 64-bit Windows
+	# (C:\Program Files or C:\Program Files (x86) for WoW64 processes).
+	foreach ($pf in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:SystemDrive\Python") | Where-Object { $_ }) {
+		$wellKnownRoots += $pf
+	}
+	$seen = @{}
+	foreach ($c in $candidates) { $seen[$c.Executable] = $true }
+	foreach ($root in $wellKnownRoots) {
+		if (-not $root -or -not (Test-Path -LiteralPath $root -ErrorAction SilentlyContinue)) { continue }
+		foreach ($dir in Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue) {
+			# Match folder names like "Python312", "Python312-32", "Python310", "Python3.12", etc.
+			if ($dir.Name -notmatch '(?i)^python\s*3\.?(\d+)(-32)?$') { continue }
+			$exe = Join-Path -Path $dir.FullName -ChildPath 'python.exe'
+			if ((Test-Path -LiteralPath $exe) -and -not $seen.ContainsKey($exe)) {
+				$seen[$exe] = $true
+				$candidates.Add([pscustomobject]@{ Executable = $exe; Prefix = @() })
 			}
 		}
 	}
